@@ -1,0 +1,12 @@
+mesa
+mesa-geo
+seaborn
+jupyter
+notebook
+jupyter_contrib_nbextensions
+jupyter_nbextensions_configurator
+autopep8
+tqdm
+momepy
+networkx
+black[jupyter]
