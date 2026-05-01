@@ -25,7 +25,7 @@ from src.model.model import BikePedModel  # type: ignore[reportMissingImports]
 def build_parser():
   parser = argparse.ArgumentParser(
     prog="gabm-refactoring",
-    description="Run the refactoring (bike vs pedestrian crowding) model and write per-agent CSV history.",
+    description="Run the bike-vs-car stress model and write per-agent history.",
   )
 
   parser.add_argument("--data-crs", default="epsg:4326", help="CRS of input data")
@@ -77,7 +77,7 @@ def build_parser():
   parser.add_argument("--walk-speed", type=float, default=300.0, help="Bike speed (m per tick)")
   parser.add_argument("--bike-speed", type=float, default=600.0, help="Car speed (m per tick)")
   parser.add_argument("--epsilon", type=float, default=0.15, help="Epsilon-greedy exploration rate")
-  parser.add_argument("--alpha", type=float, default=0.6, help="EWMA learning rate")
+  parser.add_argument("--alpha", type=float, default=0.6, help="Stress EWMA learning rate")
 
   parser.add_argument(
     "--initial-car-share",
@@ -93,10 +93,24 @@ def build_parser():
     help=argparse.SUPPRESS,
   )
   parser.add_argument(
+    "--stress-bin-size-m",
     "--crowding-bin-size-m",
+    dest="stress_bin_size_m",
     type=float,
     default=25.0,
-    help="Bin size (meters) used to approximate co-location crowding",
+    help="Bin size (meters) used to approximate co-location stress exposure.",
+  )
+  parser.add_argument(
+    "--bike-sweet-spot",
+    type=int,
+    default=5,
+    help="Number of nearby cyclists that lowers bike stress before overcrowding begins.",
+  )
+  parser.add_argument(
+    "--overcrowding-weight",
+    type=float,
+    default=0.5,
+    help="Rate at which bike stress rises again beyond the bike sweet spot.",
   )
 
   parser.add_argument(
@@ -172,9 +186,11 @@ def main(argv: list[str] | None = None) -> int:
     commuter_walk_speed_m_per_tick=args.walk_speed,
     commuter_bike_speed_m_per_tick=args.bike_speed,
     commuter_mode_choice_epsilon=args.epsilon,
-    commuter_crowding_ewma_alpha=args.alpha,
+    commuter_stress_ewma_alpha=args.alpha,
+    bike_sweet_spot=args.bike_sweet_spot,
+    overcrowding_weight=args.overcrowding_weight,
     initial_car_share=args.initial_car_share,
-    crowding_bin_size_m=args.crowding_bin_size_m,
+    stress_bin_size_m=args.stress_bin_size_m,
     car_distance_threshold_m=args.car_distance_threshold_m,
     car_prob_below_threshold=args.car_prob_below_threshold,
     car_prob_max=args.car_prob_max,

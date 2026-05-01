@@ -39,7 +39,7 @@ def get_unix_time_ms(model) -> int:
 
 
 class BikePedModel(mesa.Model):
-    """Refactoring model: commuters choose between bike vs car based on crowding."""
+    """Refactoring model: commuters choose between bike and car based on stress."""
 
     running: bool
     space: District
@@ -66,9 +66,12 @@ class BikePedModel(mesa.Model):
         commuter_walk_speed_m_per_tick: float = 300.0,
         commuter_bike_speed_m_per_tick: float = 600.0,
         commuter_mode_choice_epsilon: float = 0.05,
-        commuter_crowding_ewma_alpha: float = 0.25,
+        commuter_stress_ewma_alpha: float = 0.25,
+        bike_sweet_spot: int = 5,
+        overcrowding_weight: float = 0.5,
         initial_car_share: float = 0.8,
-        crowding_bin_size_m: float = 25.0,
+        stress_bin_size_m: float = 25.0,
+        crowding_bin_size_m: float | None = None,
         car_distance_threshold_m: float = 5000.0,
         car_prob_below_threshold: float = 0.1,
         car_prob_max: float = 0.9,
@@ -86,7 +89,10 @@ class BikePedModel(mesa.Model):
 
         self.district = district
         self.data_crs = data_crs
-        self.space = District(crs=model_crs, crowding_bin_size_m=crowding_bin_size_m)
+        if crowding_bin_size_m is not None:
+            stress_bin_size_m = crowding_bin_size_m
+
+        self.space = District(crs=model_crs, stress_bin_size_m=stress_bin_size_m)
         self.num_commuters = num_commuters
         self.initial_car_share = float(initial_car_share)
         if not (0.0 <= self.initial_car_share <= 1.0):
@@ -124,7 +130,9 @@ class BikePedModel(mesa.Model):
         Commuter.WALK_SPEED_M_PER_TICK = commuter_walk_speed_m_per_tick
         Commuter.BIKE_SPEED_M_PER_TICK = commuter_bike_speed_m_per_tick
         Commuter.MODE_CHOICE_EPSILON = commuter_mode_choice_epsilon
-        Commuter.CROWDING_EWMA_ALPHA = commuter_crowding_ewma_alpha
+        Commuter.STRESS_EWMA_ALPHA = commuter_stress_ewma_alpha
+        Commuter.BIKE_SWEET_SPOT = int(bike_sweet_spot)
+        Commuter.OVERCROWDING_WEIGHT = float(overcrowding_weight)
 
         Commuter.CAR_DISTANCE_THRESHOLD_M = float(car_distance_threshold_m)
         Commuter.CAR_PROB_BELOW_THRESHOLD = float(car_prob_below_threshold)
@@ -148,9 +156,11 @@ class BikePedModel(mesa.Model):
         )
 
         logger.info(
-            "Crowding bin size=%.2fm | initial_car_share=%.2f",
-            getattr(self.space, "crowding_bin_size_m", float("nan")),
+            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | overcrowding_weight=%.2f",
+            getattr(self.space, "stress_bin_size_m", float("nan")),
             self.initial_car_share,
+            Commuter.BIKE_SWEET_SPOT,
+            Commuter.OVERCROWDING_WEIGHT,
         )
 
         logger.info(
@@ -239,14 +249,12 @@ class BikePedModel(mesa.Model):
             # Seed initial mode mix.
             if random.random() < self.initial_car_share:
                 commuter.current_mode = "car"
-                if hasattr(commuter, "_expected_crowding"):
-                    commuter._expected_crowding["car"] = 0.0
-                    commuter._expected_crowding["bike"] = 1.0
+                commuter._expected_stress["car"] = 0.0
+                commuter._expected_stress["bike"] = 1.0
             else:
                 commuter.current_mode = "bike"
-                if hasattr(commuter, "_expected_crowding"):
-                    commuter._expected_crowding["bike"] = 0.0
-                    commuter._expected_crowding["car"] = 1.0
+                commuter._expected_stress["bike"] = 0.0
+                commuter._expected_stress["car"] = 1.0
 
             self.space.add_commuter(commuter)
     

@@ -13,26 +13,38 @@ class District(mg.GeoSpace):
     homes: tuple[Building]
     workplaces: tuple[Building]
     _buildings: dict[int, Building]
+    stress_bin_size_m: float
     crowding_bin_size_m: float
     _commuters_pos_map: DefaultDict[tuple[int, int], set[Commuter]]
     _commuter_id_map: dict[int, Commuter]
     
-    def __init__(self, crs, *, crowding_bin_size_m: float = 25.0) -> None:
+    def __init__(
+        self,
+        crs,
+        *,
+        stress_bin_size_m: float = 25.0,
+        crowding_bin_size_m: float | None = None,
+    ) -> None:
         super().__init__(crs=crs)
         self.homes = ()
         self.workplaces = ()
         self._buildings = {}
-        self.crowding_bin_size_m = float(crowding_bin_size_m)
+        if crowding_bin_size_m is not None:
+            stress_bin_size_m = crowding_bin_size_m
+
+        self.stress_bin_size_m = float(stress_bin_size_m)
+        # Backward-compatible alias for older call sites.
+        self.crowding_bin_size_m = self.stress_bin_size_m
         self._commuters_pos_map = defaultdict(set)
         self._commuter_id_map = {}
 
     def _pos_key(self, pos: mesa.space.FloatCoordinate) -> tuple[int, int]:
         """Quantize a continuous (x,y) into a stable bin key.
 
-        Without quantization, exact float matching makes co-location crowding
+        Without quantization, exact float matching makes co-location stress
         almost always zero.
         """
-        bin_size = self.crowding_bin_size_m
+        bin_size = self.stress_bin_size_m
         if bin_size <= 0:
             # Fallback to 1m bins.
             bin_size = 1.0

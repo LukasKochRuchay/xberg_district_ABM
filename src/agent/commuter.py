@@ -16,9 +16,9 @@ class Commuter(mg.GeoAgent):
     """A commuter who chooses between biking and car trip-by-trip.
 
     The key new mechanism for the refactor is mode choice based on experienced
-    crowding (co-presence). This version measures crowding using exact-position
-    co-location (via District.get_commuters_by_pos), and updates an internal
-    expected crowding for each mode.
+    stress from co-presence. This version measures local co-location via
+    District.get_commuters_by_pos and updates an internal expected stress for
+    each mode.
     """
 
     unique_id: int
@@ -45,7 +45,7 @@ class Commuter(mg.GeoAgent):
     WALK_SPEED_M_PER_TICK: float
     BIKE_SPEED_M_PER_TICK: float
     MODE_CHOICE_EPSILON: float
-    CROWDING_EWMA_ALPHA: float
+    STRESS_EWMA_ALPHA: float
 
     # Car choice: distance-based probability (in meters).
     CAR_DISTANCE_THRESHOLD_M: float
@@ -53,8 +53,10 @@ class Commuter(mg.GeoAgent):
     CAR_PROB_MAX: float
     CAR_PROB_RAMP_M: float
 
-    # When biking, car co-presence contributes to perceived crowding.
+    # When biking, car co-presence contributes to perceived stress.
     BIKE_CAR_TRAFFIC_WEIGHT: float
+    BIKE_SWEET_SPOT: int
+    OVERCROWDING_WEIGHT: float
 
     def __init__(self, model, geometry, crs) -> None:
         super().__init__(model, geometry, crs)
@@ -83,7 +85,7 @@ class Commuter(mg.GeoAgent):
         self.WALK_SPEED_M_PER_TICK = 300.0
         self.BIKE_SPEED_M_PER_TICK = 600.0
         self.MODE_CHOICE_EPSILON = 0.05
-        self.CROWDING_EWMA_ALPHA = 0.25
+        self.STRESS_EWMA_ALPHA = 0.25
 
         self.CAR_DISTANCE_THRESHOLD_M = 5000.0
         self.CAR_PROB_BELOW_THRESHOLD = 0.1
@@ -91,10 +93,12 @@ class Commuter(mg.GeoAgent):
         self.CAR_PROB_RAMP_M = 5000.0  # from 5km to 10km reaches max
 
         self.BIKE_CAR_TRAFFIC_WEIGHT = 2.0
+        self.BIKE_SWEET_SPOT = 5
+        self.OVERCROWDING_WEIGHT = 0.5
 
-        # Learned expectations: lower is better (less crowded).
-        self._expected_crowding: dict[str, float] = {"bike": 0.0, "car": 0.0}
-        self._trip_crowding_samples: list[int] = []
+        # Learned expectations: lower is better.
+        self._expected_stress: dict[str, float] = {"bike": 0.0, "car": 0.0}
+        self._trip_stress_samples: list[int] = []
 
     def __repr__(self) -> str:
         return (
@@ -162,7 +166,7 @@ class Commuter(mg.GeoAgent):
 
         if self.step_in_path < len(self.my_path):
             next_position = self.my_path[self.step_in_path]
-            self._sample_crowding(next_position)
+            self._sample_stress(next_position)
             self.model.space.move_commuter(self, next_position)
             self.step_in_path += 1
             return
@@ -171,7 +175,7 @@ class Commuter(mg.GeoAgent):
         if self.destination is not None:
             self.model.space.move_commuter(self, self.destination.centroid)
 
-        self._update_expected_crowding_from_trip()
+        self._update_expected_stress_from_trip()
 
         if self.destination == self.workplace:
             self.status = "work"
@@ -202,9 +206,9 @@ class Commuter(mg.GeoAgent):
             self.current_mode = "car"
             return
 
-        # Prefer the mode with lower expected crowding.
-        bike_c = self._expected_crowding["bike"]
-        car_c = self._expected_crowding["car"]
+        # Prefer the mode with lower expected stress.
+        bike_c = self._expected_stress["bike"]
+        car_c = self._expected_stress["car"]
         if bike_c == car_c:
             # Avoid a systematic bias.
             # Keep the current mode with slightly higher probability.
@@ -217,7 +221,7 @@ class Commuter(mg.GeoAgent):
     # --- Path selection ---
     def _path_select(self) -> None:
         self.step_in_path = 0
-        self._trip_crowding_samples = []
+        self._trip_stress_samples = []
 
         if self.origin is None or self.destination is None:
             self.my_path = []
@@ -273,30 +277,41 @@ class Commuter(mg.GeoAgent):
         )
         self.my_path = list(redistributed_path_in_degree.coords)
 
-    # --- Crowding measurement & learning ---
-    def _sample_crowding(self, pos: mesa.space.FloatCoordinate) -> None:
-        """Approximate crowding via binned co-location at the next point.
+    # --- Stress measurement & learning ---
+    def _sample_stress(self, pos: mesa.space.FloatCoordinate) -> None:
+        """Approximate stress via binned co-location at the next point.
 
-        For PoC we also let bike users perceive car co-presence (traffic).
+        Bike co-presence reduces stress up to a sweet spot, then raises it again
+        once biking becomes locally overcrowded. Car co-presence always raises
+        stress for bike users. Car users only accumulate stress from other cars.
         """
         colocated = self.model.space.get_commuters_by_pos(pos)
         bikes = [c for c in colocated if getattr(c, "current_mode", None) == "bike"]
         cars = [c for c in colocated if getattr(c, "current_mode", None) == "car"]
 
         if self.current_mode == "bike":
-            perceived = len(bikes) + self.BIKE_CAR_TRAFFIC_WEIGHT * len(cars)
+            if len(bikes) <= self.BIKE_SWEET_SPOT:
+                bike_term = -len(bikes)
+            else:
+                bike_term = -self.BIKE_SWEET_SPOT + (
+                    len(bikes) - self.BIKE_SWEET_SPOT
+                ) * self.OVERCROWDING_WEIGHT
+
+            stress = bike_term + self.BIKE_CAR_TRAFFIC_WEIGHT * len(cars)
         else:
-            perceived = len(cars)
+            stress = len(cars)
 
-        self._trip_crowding_samples.append(max(0, int(perceived)))
+        self._trip_stress_samples.append(int(stress))
 
-    def _update_expected_crowding_from_trip(self) -> None:
-        if not self._trip_crowding_samples:
+    def _update_expected_stress_from_trip(self) -> None:
+        if not self._trip_stress_samples:
             return
 
-        trip_mean = float(np.mean(self._trip_crowding_samples))
-        prev = self._expected_crowding[self.current_mode]
-        alpha = self.CROWDING_EWMA_ALPHA
-        self._expected_crowding[self.current_mode] = (1 - alpha) * prev + alpha * trip_mean
+        trip_mean = float(np.mean(self._trip_stress_samples))
+        prev = self._expected_stress[self.current_mode]
+        alpha = self.STRESS_EWMA_ALPHA
+        self._expected_stress[self.current_mode] = (
+            (1 - alpha) * prev + alpha * trip_mean
+        )
     
     
