@@ -60,11 +60,8 @@ class BikePedModel(mesa.Model):
         bikeways_file: str | Path = repo_root / "data/bikeway_line.zip",
         output_dir: str | Path = repo_root / "data/outputs",
         num_commuters: int = 50,
-        # NOTE: naming kept for minimal diff with the earlier PoC:
-        # - commuter_walk_speed_m_per_tick is used as BIKE speed
-        # - commuter_bike_speed_m_per_tick is used as CAR speed
-        commuter_walk_speed_m_per_tick: float = 300.0,
-        commuter_bike_speed_m_per_tick: float = 600.0,
+        commuter_bike_speed_m_per_tick: float = 300.0,
+        commuter_car_speed_m_per_tick: float = 600.0,
         commuter_mode_choice_epsilon: float = 0.05,
         commuter_stress_ewma_alpha: float = 0.25,
         bike_sweet_spot: int = 5,
@@ -127,8 +124,8 @@ class BikePedModel(mesa.Model):
         self.minute = start_minute
 
         # Configure commuter behavior
-        Commuter.WALK_SPEED_M_PER_TICK = commuter_walk_speed_m_per_tick
         Commuter.BIKE_SPEED_M_PER_TICK = commuter_bike_speed_m_per_tick
+        Commuter.CAR_SPEED_M_PER_TICK = commuter_car_speed_m_per_tick
         Commuter.MODE_CHOICE_EPSILON = commuter_mode_choice_epsilon
         Commuter.STRESS_EWMA_ALPHA = commuter_stress_ewma_alpha
         Commuter.BIKE_SWEET_SPOT = int(bike_sweet_spot)

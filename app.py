@@ -72,12 +72,33 @@ def build_parser():
   parser.add_argument("--num-commuters", type=int, default=50)
   parser.add_argument("--steps", type=int, default=288, help="Number of 5-min ticks to run")
 
-  # NOTE: naming kept for minimal diff with earlier PoC:
-  # --walk-speed is BIKE speed; --bike-speed is CAR speed.
-  parser.add_argument("--walk-speed", type=float, default=300.0, help="Bike speed (m per tick)")
-  parser.add_argument("--bike-speed", type=float, default=600.0, help="Car speed (m per tick)")
-  parser.add_argument("--epsilon", type=float, default=0.15, help="Epsilon-greedy exploration rate")
-  parser.add_argument("--alpha", type=float, default=0.6, help="Stress EWMA learning rate")
+  parser.add_argument(
+    "--bike-speed",
+    "--walk-speed",
+    dest="bike_speed",
+    type=float,
+    default=300.0,
+    help="Bike speed (m per tick). Legacy alias: --walk-speed.",
+  )
+  parser.add_argument(
+    "--car-speed",
+    dest="car_speed",
+    type=float,
+    default=600.0,
+    help="Car speed (m per tick).",
+  )
+  parser.add_argument(
+    "--epsilon",
+    type=float,
+    default=0.15,
+    help="Probability of exploratory mode choice instead of following the lower-stress mode.",
+  )
+  parser.add_argument(
+    "--alpha",
+    type=float,
+    default=0.6,
+    help="Learning rate for expected stress updates after each trip; 0 ignores new experience, 1 fully replaces prior expectations.",
+  )
 
   parser.add_argument(
     "--initial-car-share",
@@ -183,8 +204,8 @@ def main(argv: list[str] | None = None) -> int:
     bikeways_file=bikeways_file,
     output_dir=output_dir,
     num_commuters=args.num_commuters,
-    commuter_walk_speed_m_per_tick=args.walk_speed,
     commuter_bike_speed_m_per_tick=args.bike_speed,
+    commuter_car_speed_m_per_tick=args.car_speed,
     commuter_mode_choice_epsilon=args.epsilon,
     commuter_stress_ewma_alpha=args.alpha,
     bike_sweet_spot=args.bike_sweet_spot,

@@ -39,11 +39,8 @@ class Commuter(mg.GeoAgent):
     end_time_m: int
 
     # --- Model parameters (can be overridden by the model) ---
-    # NOTE: naming kept for minimal diff with the earlier PoC:
-    # - WALK_SPEED_M_PER_TICK is used as BIKE speed
-    # - BIKE_SPEED_M_PER_TICK is used as CAR speed
-    WALK_SPEED_M_PER_TICK: float
     BIKE_SPEED_M_PER_TICK: float
+    CAR_SPEED_M_PER_TICK: float
     MODE_CHOICE_EPSILON: float
     STRESS_EWMA_ALPHA: float
 
@@ -81,9 +78,8 @@ class Commuter(mg.GeoAgent):
         self.step_in_path = 0
 
         # Default parameters (override these from the model if desired).
-        # Bike/car speeds (see NOTE above).
-        self.WALK_SPEED_M_PER_TICK = 300.0
-        self.BIKE_SPEED_M_PER_TICK = 600.0
+        self.BIKE_SPEED_M_PER_TICK = 300.0
+        self.CAR_SPEED_M_PER_TICK = 600.0
         self.MODE_CHOICE_EPSILON = 0.05
         self.STRESS_EWMA_ALPHA = 0.25
 
@@ -264,9 +260,11 @@ class Commuter(mg.GeoAgent):
         if network_crs is None:
             return
 
-        # Choose speed based on current mode.
-        # Bike uses WALK_SPEED_M_PER_TICK; car uses BIKE_SPEED_M_PER_TICK.
-        speed = self.BIKE_SPEED_M_PER_TICK if self.current_mode == "car" else self.WALK_SPEED_M_PER_TICK
+        speed = (
+            self.CAR_SPEED_M_PER_TICK
+            if self.current_mode == "car"
+            else self.BIKE_SPEED_M_PER_TICK
+        )
 
         unit_transformer = UnitTransformer(degree_crs=network_crs)
         original_path = LineString([Point(p) for p in self.my_path])
