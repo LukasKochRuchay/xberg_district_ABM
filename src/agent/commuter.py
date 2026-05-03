@@ -52,8 +52,18 @@ class Commuter(mg.GeoAgent):
 
     # When biking, car co-presence contributes to perceived stress.
     BIKE_CAR_TRAFFIC_WEIGHT: float
+    BIKE_SOCIAL_BENEFIT_WEIGHT: float
     BIKE_SWEET_SPOT: int
     OVERCROWDING_WEIGHT: float
+    BIKE_OVERCROWDING_EXPONENT: float
+    
+    # When driving, stress starts only once car density exceeds this threshold.
+    CAR_CONGESTION_THRESHOLD: int
+    # Backward-compatible alias; kept to avoid breaking old call sites.
+    CAR_SWEET_SPOT: int
+    CAR_OVERCROWDING_WEIGHT: float
+    CAR_BIKE_TRAFFIC_WEIGHT: float
+    CAR_BIKE_CROWDING_THRESHOLD: int
 
     def __init__(self, model, geometry, crs) -> None:
         super().__init__(model, geometry, crs)
@@ -89,8 +99,16 @@ class Commuter(mg.GeoAgent):
         self.CAR_PROB_RAMP_M = 5000.0  # from 5km to 10km reaches max
 
         self.BIKE_CAR_TRAFFIC_WEIGHT = 2.0
+        self.BIKE_SOCIAL_BENEFIT_WEIGHT = 2.0
         self.BIKE_SWEET_SPOT = 5
         self.OVERCROWDING_WEIGHT = 0.5
+        self.BIKE_OVERCROWDING_EXPONENT = 1.5
+        
+        self.CAR_CONGESTION_THRESHOLD = 3
+        self.CAR_SWEET_SPOT = self.CAR_CONGESTION_THRESHOLD
+        self.CAR_OVERCROWDING_WEIGHT = 0.3
+        self.CAR_BIKE_TRAFFIC_WEIGHT = 0.8
+        self.CAR_BIKE_CROWDING_THRESHOLD = 1
 
         # Learned expectations: lower is better.
         self._expected_stress: dict[str, float] = {"bike": 0.0, "car": 0.0}
@@ -279,9 +297,11 @@ class Commuter(mg.GeoAgent):
     def _sample_stress(self, pos: mesa.space.FloatCoordinate) -> None:
         """Approximate stress via binned co-location at the next point.
 
-        Bike co-presence reduces stress up to a sweet spot, then raises it again
-        once biking becomes locally overcrowded. Car co-presence always raises
-        stress for bike users. Car users only accumulate stress from other cars.
+        Bikes: strong social co-presence benefit, then overcrowding penalty after
+        a sweet spot plus stress from nearby cars.
+
+        Cars: no positive effect from other cars; stress only from congestion
+        (cars beyond a threshold) and from crowded bike presence.
         """
         colocated = self.model.space.get_commuters_by_pos(pos)
         bikes = [c for c in colocated if getattr(c, "current_mode", None) == "bike"]
@@ -289,15 +309,25 @@ class Commuter(mg.GeoAgent):
 
         if self.current_mode == "bike":
             if len(bikes) <= self.BIKE_SWEET_SPOT:
-                bike_term = -len(bikes)
+                bike_term = -self.BIKE_SOCIAL_BENEFIT_WEIGHT * len(bikes)
             else:
-                bike_term = -self.BIKE_SWEET_SPOT + (
-                    len(bikes) - self.BIKE_SWEET_SPOT
-                ) * self.OVERCROWDING_WEIGHT
+                excess = len(bikes) - self.BIKE_SWEET_SPOT
+                bike_term = (
+                    -self.BIKE_SOCIAL_BENEFIT_WEIGHT * self.BIKE_SWEET_SPOT
+                    + self.OVERCROWDING_WEIGHT
+                    * (excess ** self.BIKE_OVERCROWDING_EXPONENT)
+                )
 
             stress = bike_term + self.BIKE_CAR_TRAFFIC_WEIGHT * len(cars)
         else:
-            stress = len(cars)
+            car_excess = max(0, len(cars) - self.CAR_CONGESTION_THRESHOLD)
+            bike_excess = max(0, len(bikes) - self.CAR_BIKE_CROWDING_THRESHOLD)
+
+            # No positive effects for cars: stress is only congestion + bike pressure.
+            stress = (
+                car_excess * self.CAR_OVERCROWDING_WEIGHT
+                + bike_excess * self.CAR_BIKE_TRAFFIC_WEIGHT
+            )
 
         self._trip_stress_samples.append(int(stress))
 

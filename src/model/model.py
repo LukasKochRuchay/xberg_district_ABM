@@ -59,6 +59,7 @@ class BikePedModel(mesa.Model):
         walkways_file: str | Path = repo_root / "data/walkway_line.zip",
         bikeways_file: str | Path = repo_root / "data/bikeway_line.zip",
         output_dir: str | Path = repo_root / "data/outputs",
+        output_name: str = "agent_history",
         num_commuters: int = 50,
         commuter_bike_speed_m_per_tick: float = 300.0,
         commuter_car_speed_m_per_tick: float = 600.0,
@@ -66,6 +67,13 @@ class BikePedModel(mesa.Model):
         commuter_stress_ewma_alpha: float = 0.25,
         bike_sweet_spot: int = 5,
         overcrowding_weight: float = 0.5,
+        bike_social_benefit_weight: float = 2.0,
+        bike_overcrowding_exponent: float = 1.5,
+        car_congestion_threshold: int = 3,
+        car_sweet_spot: int | None = None,
+        car_overcrowding_weight: float = 0.3,
+        car_bike_traffic_weight: float = 0.8,
+        car_bike_crowding_threshold: int = 1,
         initial_car_share: float = 0.8,
         stress_bin_size_m: float = 25.0,
         crowding_bin_size_m: float | None = None,
@@ -130,6 +138,16 @@ class BikePedModel(mesa.Model):
         Commuter.STRESS_EWMA_ALPHA = commuter_stress_ewma_alpha
         Commuter.BIKE_SWEET_SPOT = int(bike_sweet_spot)
         Commuter.OVERCROWDING_WEIGHT = float(overcrowding_weight)
+        Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT = float(bike_social_benefit_weight)
+        Commuter.BIKE_OVERCROWDING_EXPONENT = float(bike_overcrowding_exponent)
+        threshold = int(car_congestion_threshold)
+        if car_sweet_spot is not None:
+            threshold = int(car_sweet_spot)
+        Commuter.CAR_CONGESTION_THRESHOLD = threshold
+        Commuter.CAR_SWEET_SPOT = threshold
+        Commuter.CAR_OVERCROWDING_WEIGHT = float(car_overcrowding_weight)
+        Commuter.CAR_BIKE_TRAFFIC_WEIGHT = float(car_bike_traffic_weight)
+        Commuter.CAR_BIKE_CROWDING_THRESHOLD = int(car_bike_crowding_threshold)
 
         Commuter.CAR_DISTANCE_THRESHOLD_M = float(car_distance_threshold_m)
         Commuter.CAR_PROB_BELOW_THRESHOLD = float(car_prob_below_threshold)
@@ -139,8 +157,11 @@ class BikePedModel(mesa.Model):
         # Output paths
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._agent_log_path = self.output_dir / "agent_history.csv"
-        self._agent_geojson_path = self.output_dir / "agent_history.geojson"
+        self.output_name = str(output_name).strip()
+        if not self.output_name:
+            raise ValueError("output_name must not be empty")
+        self._agent_log_path = self.output_dir / f"{self.output_name}.csv"
+        self._agent_geojson_path = self.output_dir / f"{self.output_name}.geojson"
         self._geojson_file = None
         self._geojson_first_feature = True
 
@@ -153,11 +174,17 @@ class BikePedModel(mesa.Model):
         )
 
         logger.info(
-            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | overcrowding_weight=%.2f",
+            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | bike_social_benefit_weight=%.2f | overcrowding_weight=%.2f | bike_overcrowding_exponent=%.2f | car_congestion_threshold=%d | car_overcrowding_weight=%.2f | car_bike_traffic_weight=%.2f | car_bike_crowding_threshold=%d",
             getattr(self.space, "stress_bin_size_m", float("nan")),
             self.initial_car_share,
             Commuter.BIKE_SWEET_SPOT,
+            Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT,
             Commuter.OVERCROWDING_WEIGHT,
+            Commuter.BIKE_OVERCROWDING_EXPONENT,
+            Commuter.CAR_CONGESTION_THRESHOLD,
+            Commuter.CAR_OVERCROWDING_WEIGHT,
+            Commuter.CAR_BIKE_TRAFFIC_WEIGHT,
+            Commuter.CAR_BIKE_CROWDING_THRESHOLD,
         )
 
         logger.info(
@@ -358,18 +385,29 @@ class BikePedModel(mesa.Model):
 
     def step(self) -> None:
         step = getattr(self, "_step", 0)
-        commuters = self.agents_by_type.get(Commuter, [])
-        status_counts: dict[str, int] = {}
-        for c in commuters:
-            status_counts[c.status] = status_counts.get(c.status, 0) + 1
+        commuters = list(self.agents_by_type.get(Commuter, []))
 
-        logger.info(
-            "Step=%d timestamp=%s sim_time=%s statuses=%s",
-            step,
-            get_unix_time_ms(self),
-            get_time(self),
-            status_counts,
-        )
+        log_interval = getattr(self, "log_interval", 1)
+        if step % log_interval == 0:
+            status_counts: dict[str, int] = {}
+            mode_counts: dict[str, int] = {}
+            for c in commuters:
+                status_counts[c.status] = status_counts.get(c.status, 0) + 1
+                mode_counts[c.current_mode] = mode_counts.get(c.current_mode, 0) + 1
+
+            total = len(commuters) or 1
+            bike_share = mode_counts.get("bike", 0) / total
+            logger.info(
+                "Step=%d day=%d %02d:%02d | bike_share=%.1f%% (%d/%d) | statuses=%s",
+                step,
+                self.day,
+                self.hour,
+                self.minute,
+                bike_share * 100,
+                mode_counts.get("bike", 0),
+                total,
+                status_counts,
+            )
 
         self._update_clock()
         self.agents.shuffle_do("step")

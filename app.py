@@ -37,8 +37,8 @@ def build_parser():
 
   parser.add_argument(
     "--output-crs",
-    default=None,
-    help="CRS for CSV x/y output (e.g. epsg:4326). Defaults to --model-crs.",
+    default="epsg:4326",
+    help="CRS for CSV x/y output. Defaults to epsg:4326 (WGS84).",
   )
 
   parser.add_argument(
@@ -67,6 +67,11 @@ def build_parser():
     "--output-dir",
     default="data/outputs",
     help="Output directory (relative to models/refactoring/) for agent_history.csv",
+  )
+  parser.add_argument(
+    "--output-name",
+    default="agent_history",
+    help="Base filename for simulation output, without extension.",
   )
 
   parser.add_argument("--num-commuters", type=int, default=50)
@@ -133,6 +138,45 @@ def build_parser():
     default=0.5,
     help="Rate at which bike stress rises again beyond the bike sweet spot.",
   )
+  parser.add_argument(
+    "--bike-social-benefit-weight",
+    type=float,
+    default=2.0,
+    help="Strength of stress reduction from nearby bikes before the sweet spot.",
+  )
+  parser.add_argument(
+    "--bike-overcrowding-exponent",
+    type=float,
+    default=1.5,
+    help="Nonlinear exponent for bike overcrowding penalty beyond the sweet spot.",
+  )
+
+  parser.add_argument(
+    "--car-congestion-threshold",
+    "--car-sweet-spot",
+    dest="car_congestion_threshold",
+    type=int,
+    default=3,
+    help="Nearby car count above which car users start accumulating congestion stress.",
+  )
+  parser.add_argument(
+    "--car-overcrowding-weight",
+    type=float,
+    default=0.3,
+    help="Rate at which car stress rises beyond the car sweet spot (congestion penalty).",
+  )
+  parser.add_argument(
+    "--car-bike-traffic-weight",
+    type=float,
+    default=0.8,
+    help="Stress contribution from nearby bikes to car users.",
+  )
+  parser.add_argument(
+    "--car-bike-crowding-threshold",
+    type=int,
+    default=1,
+    help="Nearby bike count threshold before car users start feeling bike-induced stress.",
+  )
 
   parser.add_argument(
     "--car-distance-threshold-m",
@@ -171,6 +215,12 @@ def build_parser():
   )
 
   parser.add_argument(
+    "--log-interval",
+    type=int,
+    default=12,
+    help="Log mode-share summary every N steps (default: 12 = once per simulated hour).",
+  )
+  parser.add_argument(
     "--log-level",
     default="INFO",
     choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
@@ -203,6 +253,7 @@ def main(argv: list[str] | None = None) -> int:
     walkways_file=walkways_file,
     bikeways_file=bikeways_file,
     output_dir=output_dir,
+    output_name=args.output_name,
     num_commuters=args.num_commuters,
     commuter_bike_speed_m_per_tick=args.bike_speed,
     commuter_car_speed_m_per_tick=args.car_speed,
@@ -210,6 +261,12 @@ def main(argv: list[str] | None = None) -> int:
     commuter_stress_ewma_alpha=args.alpha,
     bike_sweet_spot=args.bike_sweet_spot,
     overcrowding_weight=args.overcrowding_weight,
+    bike_social_benefit_weight=args.bike_social_benefit_weight,
+    bike_overcrowding_exponent=args.bike_overcrowding_exponent,
+    car_congestion_threshold=args.car_congestion_threshold,
+    car_overcrowding_weight=args.car_overcrowding_weight,
+    car_bike_traffic_weight=args.car_bike_traffic_weight,
+    car_bike_crowding_threshold=args.car_bike_crowding_threshold,
     initial_car_share=args.initial_car_share,
     stress_bin_size_m=args.stress_bin_size_m,
     car_distance_threshold_m=args.car_distance_threshold_m,
@@ -223,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
     start_hour=args.start_hour,
     start_minute=args.start_minute,
   )
+  model.log_interval = args.log_interval
 
   # Mesa seed support varies; set if available.
   if args.seed is not None:
@@ -237,7 +295,8 @@ def main(argv: list[str] | None = None) -> int:
   if hasattr(model, "finalize"):
     model.finalize()
 
-  out_name = "agent_history.csv" if args.output_format == "csv" else "agent_history.geojson"
+  suffix = ".csv" if args.output_format == "csv" else ".geojson"
+  out_name = f"{args.output_name}{suffix}"
   print(str((Path(model.output_dir) / out_name).resolve()))
   return 0
 
