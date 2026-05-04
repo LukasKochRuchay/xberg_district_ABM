@@ -66,10 +66,9 @@ class BikePedModel(mesa.Model):
         commuter_mode_choice_epsilon: float = 0.05,
         commuter_stress_ewma_alpha: float = 0.25,
         bike_sweet_spot: int = 5,
-        overcrowding_weight: float = 0.5,
+        overcrowding_weight: float = 0.0,
         bike_car_traffic_weight: float = 2.0,
-        bikeability_from_bikes_weight: float = 0.3,
-        bike_social_benefit_weight: float = 2.0,
+        bike_social_benefit_weight: float = 5.0,
         bike_overcrowding_exponent: float = 1.5,
         car_congestion_threshold: int = 3,
         car_sweet_spot: int | None = None,
@@ -141,9 +140,6 @@ class BikePedModel(mesa.Model):
         Commuter.BIKE_SWEET_SPOT = int(bike_sweet_spot)
         Commuter.OVERCROWDING_WEIGHT = float(overcrowding_weight)
         Commuter.BIKE_CAR_TRAFFIC_WEIGHT = float(bike_car_traffic_weight)
-        Commuter.BIKEABILITY_FROM_BIKES_WEIGHT = float(
-            bikeability_from_bikes_weight
-        )
         Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT = float(bike_social_benefit_weight)
         Commuter.BIKE_OVERCROWDING_EXPONENT = float(bike_overcrowding_exponent)
         threshold = int(car_congestion_threshold)
@@ -180,13 +176,12 @@ class BikePedModel(mesa.Model):
         )
 
         logger.info(
-            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | bike_social_benefit_weight=%.2f | bike_car_traffic_weight=%.2f | bikeability_from_bikes_weight=%.2f | overcrowding_weight=%.2f | bike_overcrowding_exponent=%.2f | car_congestion_threshold=%d | car_overcrowding_weight=%.2f | car_bike_traffic_weight=%.2f | car_bike_crowding_threshold=%d",
+            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | bike_social_benefit_weight=%.2f | bike_car_traffic_weight=%.2f | bike_overcrowding_weight=%.2f | bike_overcrowding_exponent=%.2f | car_congestion_threshold=%d | car_overcrowding_weight=%.2f | car_bike_traffic_weight=%.2f | car_bike_crowding_threshold=%d",
             getattr(self.space, "stress_bin_size_m", float("nan")),
             self.initial_car_share,
             Commuter.BIKE_SWEET_SPOT,
             Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT,
             Commuter.BIKE_CAR_TRAFFIC_WEIGHT,
-            Commuter.BIKEABILITY_FROM_BIKES_WEIGHT,
             Commuter.OVERCROWDING_WEIGHT,
             Commuter.BIKE_OVERCROWDING_EXPONENT,
             Commuter.CAR_CONGESTION_THRESHOLD,
@@ -253,8 +248,17 @@ class BikePedModel(mesa.Model):
             )
             self._geojson_file = self._agent_geojson_path.open("a", encoding="utf-8")
             self._geojson_first_feature = True
+        elif self.output_format == "daily_stats":
+            # Write a compact daily summary for easier downstream analysis.
+            header = "day,bike_share,car_share,bike_count,car_count,c2b,b2c,net_switch\n"
+            self._agent_log_path.write_text(header)
+            self._last_daily_written_day: int | None = None
+            self._prev_daily_modes: dict[int, str] = {}
         else:
-            raise ValueError(f"Invalid output_format={self.output_format!r}. Expected 'csv' or 'geojson'.")
+            raise ValueError(
+                f"Invalid output_format={self.output_format!r}. "
+                "Expected 'csv', 'geojson', or 'daily_stats'."
+            )
 
         logger.info("Initialization complete")
 
@@ -432,7 +436,7 @@ class BikePedModel(mesa.Model):
             self.minute = 0
 
     def _write_agent_snapshot(self) -> None:
-        """Write per-commuter state (CSV rows or GeoJSON features)."""
+        """Write per-commuter state (CSV/GeoJSON) or compact daily stats."""
         unix_time_ms = get_unix_time_ms(self)
 
         # Mesa doesn't guarantee a stable step counter attribute across versions.
@@ -488,6 +492,36 @@ class BikePedModel(mesa.Model):
                     self._geojson_file.write(",\n")
                 self._geojson_first_feature = False
                 self._geojson_file.write(json.dumps(feature, ensure_ascii=False))
+
+        elif self.output_format == "daily_stats":
+            if self._last_daily_written_day is None or self.day != self._last_daily_written_day:
+                bike_count = sum(1 for c in commuters if c.current_mode == "bike")
+                total = len(commuters)
+                car_count = total - bike_count
+                bike_share = (bike_count / total) if total else 0.0
+                car_share = (car_count / total) if total else 0.0
+
+                current_modes = {int(c.unique_id): str(c.current_mode) for c in commuters}
+                c2b = 0
+                b2c = 0
+                if self._prev_daily_modes:
+                    for cid, mode in current_modes.items():
+                        prev = self._prev_daily_modes.get(cid)
+                        if prev == "car" and mode == "bike":
+                            c2b += 1
+                        elif prev == "bike" and mode == "car":
+                            b2c += 1
+
+                net_switch = c2b - b2c
+                row = (
+                    f"{self.day},{bike_share:.6f},{car_share:.6f},"
+                    f"{bike_count},{car_count},{c2b},{b2c},{net_switch}\n"
+                )
+                with self._agent_log_path.open("a", encoding="utf-8") as f:
+                    f.write(row)
+
+                self._prev_daily_modes = current_modes
+                self._last_daily_written_day = self.day
 
         else:
             raise ValueError(f"Invalid output_format={self.output_format!r}")

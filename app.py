@@ -28,56 +28,32 @@ def build_parser():
     description="Run the bike-vs-car stress model and write per-agent history.",
   )
 
-  parser.add_argument("--data-crs", default="epsg:4326", help="CRS of input data")
-  parser.add_argument(
-    "--model-crs",
-    default="epsg:3857",
-    help="CRS used internally for routing/space",
+  # ── Global ────────────────────────────────────────────────────────────────
+  glob = parser.add_argument_group(
+    "global",
+    "Population size, simulation length, learning rates, and initial conditions.",
   )
-
-  parser.add_argument(
-    "--output-crs",
-    default="epsg:4326",
-    help="CRS for CSV x/y output. Defaults to epsg:4326 (WGS84).",
+  glob.add_argument("--num-commuters", type=int, default=50)
+  glob.add_argument("--steps", type=int, default=288, help="Number of 5-min ticks to run.")
+  glob.add_argument(
+    "--initial-car-share",
+    type=float,
+    default=0.8,
+    help="Initial share of commuters seeded as car users (0..1).",
   )
-
-  parser.add_argument(
-    "--output-format",
-    default="csv",
-    choices=["csv", "geojson"],
-    help="Output format for agent history (csv or geojson).",
+  glob.add_argument(
+    "--epsilon",
+    type=float,
+    default=0.15,
+    help="Probability of exploratory mode choice instead of following the lower-stress mode.",
   )
-
-  parser.add_argument(
-     "--buildings-file",
-      default="data/district_bld.zip",
-    help="Path (relative to models/refactoring/) to buildings dataset",
+  glob.add_argument(
+    "--alpha",
+    type=float,
+    default=0.6,
+    help="EWMA learning rate for expected stress; 0 ignores new experience, 1 fully replaces prior.",
   )
-  parser.add_argument(
-     "--walkways-file",
-      default="data/district_walkway_line.zip",
-    help="Path (relative to models/refactoring/) to walking network lines",
-  )
-  parser.add_argument(
-     "--bikeways-file",
-      default="data/district_bikeway_line.zip",
-    help="Path (relative to models/refactoring/) to biking network lines",
-  )
-  parser.add_argument(
-    "--output-dir",
-    default="data/outputs",
-    help="Output directory (relative to models/refactoring/) for agent_history.csv",
-  )
-  parser.add_argument(
-    "--output-name",
-    default="agent_history",
-    help="Base filename for simulation output, without extension.",
-  )
-
-  parser.add_argument("--num-commuters", type=int, default=50)
-  parser.add_argument("--steps", type=int, default=288, help="Number of 5-min ticks to run")
-
-  parser.add_argument(
+  glob.add_argument(
     "--bike-speed",
     "--walk-speed",
     dest="bike_speed",
@@ -85,40 +61,14 @@ def build_parser():
     default=300.0,
     help="Bike speed (m per tick). Legacy alias: --walk-speed.",
   )
-  parser.add_argument(
+  glob.add_argument(
     "--car-speed",
     dest="car_speed",
     type=float,
     default=600.0,
     help="Car speed (m per tick).",
   )
-  parser.add_argument(
-    "--epsilon",
-    type=float,
-    default=0.15,
-    help="Probability of exploratory mode choice instead of following the lower-stress mode.",
-  )
-  parser.add_argument(
-    "--alpha",
-    type=float,
-    default=0.6,
-    help="Learning rate for expected stress updates after each trip; 0 ignores new experience, 1 fully replaces prior expectations.",
-  )
-
-  parser.add_argument(
-    "--initial-car-share",
-    type=float,
-    default=0.8,
-    help="Initial share of commuters seeded as car users (0..1)",
-  )
-  # Backwards compatibility with previous PoC runs.
-  parser.add_argument(
-    "--initial-bike-share",
-    dest="initial_car_share",
-    type=float,
-    help=argparse.SUPPRESS,
-  )
-  parser.add_argument(
+  glob.add_argument(
     "--stress-bin-size-m",
     "--crowding-bin-size-m",
     dest="stress_bin_size_m",
@@ -126,117 +76,168 @@ def build_parser():
     default=25.0,
     help="Bin size (meters) used to approximate co-location stress exposure.",
   )
-  parser.add_argument(
+
+  # ── Bike parameters ───────────────────────────────────────────────────────
+  bike = parser.add_argument_group(
+    "bike",
+    "Stress parameters governing the cycling experience.",
+  )
+  bike.add_argument(
     "--bike-sweet-spot",
     type=int,
     default=5,
     help="Number of nearby cyclists that lowers bike stress before overcrowding begins.",
   )
-  parser.add_argument(
-    "--bike-car-traffic-weight",
-    type=float,
-    default=2.0,
-    help="Stress contribution from nearby cars to bike users.",
-  )
-  parser.add_argument(
-    "--bikeability-from-bikes-weight",
-    type=float,
-    default=0.3,
-    help="How strongly bike co-presence increases learned bikeability in mode choice.",
-  )
-  parser.add_argument(
-    "--overcrowding-weight",
-    type=float,
-    default=0.5,
-    help="Rate at which bike stress rises again beyond the bike sweet spot.",
-  )
-  parser.add_argument(
+  bike.add_argument(
     "--bike-social-benefit-weight",
     type=float,
-    default=2.0,
-    help="Strength of stress reduction from nearby bikes before the sweet spot.",
+    default=5.0,
+    help="Stress reduction per nearby cyclist below the sweet spot.",
   )
-  parser.add_argument(
+  bike.add_argument(
+    "--bike-overcrowding-weight",
+    "--overcrowding-weight",
+    dest="overcrowding_weight",
+    type=float,
+    default=0.0,
+    help="Penalty rate when cyclist count exceeds bike-sweet-spot. 0 disables overcrowding.",
+  )
+  bike.add_argument(
     "--bike-overcrowding-exponent",
     type=float,
     default=1.5,
     help="Nonlinear exponent for bike overcrowding penalty beyond the sweet spot.",
   )
+  bike.add_argument(
+    "--bike-car-traffic-weight",
+    type=float,
+    default=2.0,
+    help="Stress contribution from nearby cars to cyclists.",
+  )
 
-  parser.add_argument(
+  # ── Car parameters ────────────────────────────────────────────────────────
+  car = parser.add_argument_group(
+    "car",
+    "Stress parameters governing the driving experience and distance-based mode probability.",
+  )
+  car.add_argument(
     "--car-congestion-threshold",
     "--car-sweet-spot",
     dest="car_congestion_threshold",
     type=int,
     default=3,
-    help="Nearby car count above which car users start accumulating congestion stress.",
+    help="Nearby car count above which drivers start accumulating congestion stress.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-overcrowding-weight",
     type=float,
     default=0.3,
-    help="Rate at which car stress rises beyond the car sweet spot (congestion penalty).",
+    help="Stress rate per car beyond the congestion threshold.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-bike-traffic-weight",
     type=float,
     default=0.8,
-    help="Stress contribution from nearby bikes to car users.",
+    help="Stress contribution from nearby cyclists to drivers.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-bike-crowding-threshold",
     type=int,
     default=1,
-    help="Nearby bike count threshold before car users start feeling bike-induced stress.",
+    help="Number of nearby cyclists before drivers start feeling bike-induced stress.",
   )
-
-  parser.add_argument(
+  car.add_argument(
     "--car-distance-threshold-m",
     type=float,
     default=5000.0,
-    help="Distance threshold (m). Beyond this, car becomes more likely.",
+    help="Trip distance (m) beyond which car becomes more likely.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-prob-below-threshold",
     type=float,
     default=0.1,
-    help="Base probability of choosing car when distance <= threshold.",
+    help="Base probability of choosing car for trips below the distance threshold.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-prob-max",
     type=float,
     default=0.9,
-    help="Maximum probability of choosing car for long distances.",
+    help="Maximum probability of choosing car for very long trips.",
   )
-  parser.add_argument(
+  car.add_argument(
     "--car-prob-ramp-m",
     type=float,
     default=5000.0,
-    help="Ramp length (m) beyond threshold to reach car-prob-max.",
+    help="Ramp length (m) beyond threshold over which car probability rises to car-prob-max.",
   )
 
-  parser.add_argument("--start-day", type=int, default=0)
-  parser.add_argument("--start-hour", type=int, default=5)
-  parser.add_argument("--start-minute", type=int, default=55)
-
-  parser.add_argument(
+  # ── Data & output ─────────────────────────────────────────────────────────
+  data = parser.add_argument_group(
+    "data & output",
+    "Input files, output paths, CRS settings, logging, and simulation clock.",
+  )
+  data.add_argument("--data-crs", default="epsg:4326", help="CRS of input data.")
+  data.add_argument(
+    "--model-crs",
+    default="epsg:3857",
+    help="CRS used internally for routing/space.",
+  )
+  data.add_argument(
+    "--output-crs",
+    default="epsg:4326",
+    help="CRS for CSV x/y output. Defaults to epsg:4326 (WGS84).",
+  )
+  data.add_argument(
+    "--output-format",
+    default="csv",
+    choices=["csv", "geojson", "daily_stats"],
+    help="Output format: csv (per-step per-agent), geojson, or daily_stats (compact daily aggregates).",
+  )
+  data.add_argument(
+    "--buildings-file",
+    default="data/district_bld.zip",
+    help="Path to buildings dataset.",
+  )
+  data.add_argument(
+    "--walkways-file",
+    default="data/district_walkway_line.zip",
+    help="Path to walking network lines.",
+  )
+  data.add_argument(
+    "--bikeways-file",
+    default="data/district_bikeway_line.zip",
+    help="Path to biking network lines.",
+  )
+  data.add_argument(
+    "--output-dir",
+    default="data/outputs",
+    help="Directory for simulation output files.",
+  )
+  data.add_argument(
+    "--output-name",
+    default="agent_history",
+    help="Base filename for simulation output, without extension.",
+  )
+  data.add_argument("--start-day", type=int, default=0)
+  data.add_argument("--start-hour", type=int, default=5)
+  data.add_argument("--start-minute", type=int, default=55)
+  data.add_argument(
     "--seed",
     type=int,
     default=None,
-    help="Optional RNG seed (best-effort; depends on Mesa version)",
+    help="Optional RNG seed (best-effort; depends on Mesa version).",
   )
-
-  parser.add_argument(
+  data.add_argument(
     "--log-interval",
     type=int,
     default=12,
     help="Log mode-share summary every N steps (default: 12 = once per simulated hour).",
   )
-  parser.add_argument(
+  data.add_argument(
     "--log-level",
     default="INFO",
     choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-    help="Logging verbosity",
+    help="Logging verbosity.",
   )
 
   return parser
@@ -273,7 +274,6 @@ def main(argv: list[str] | None = None) -> int:
     commuter_stress_ewma_alpha=args.alpha,
     bike_sweet_spot=args.bike_sweet_spot,
     bike_car_traffic_weight=args.bike_car_traffic_weight,
-    bikeability_from_bikes_weight=args.bikeability_from_bikes_weight,
     overcrowding_weight=args.overcrowding_weight,
     bike_social_benefit_weight=args.bike_social_benefit_weight,
     bike_overcrowding_exponent=args.bike_overcrowding_exponent,
@@ -309,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
   if hasattr(model, "finalize"):
     model.finalize()
 
-  suffix = ".csv" if args.output_format == "csv" else ".geojson"
+  suffix = ".geojson" if args.output_format == "geojson" else ".csv"
   out_name = f"{args.output_name}{suffix}"
   print(str((Path(model.output_dir) / out_name).resolve()))
   return 0
