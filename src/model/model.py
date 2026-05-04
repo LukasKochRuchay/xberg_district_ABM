@@ -67,6 +67,8 @@ class BikePedModel(mesa.Model):
         commuter_stress_ewma_alpha: float = 0.25,
         bike_sweet_spot: int = 5,
         overcrowding_weight: float = 0.5,
+        bike_car_traffic_weight: float = 2.0,
+        bikeability_from_bikes_weight: float = 0.3,
         bike_social_benefit_weight: float = 2.0,
         bike_overcrowding_exponent: float = 1.5,
         car_congestion_threshold: int = 3,
@@ -138,6 +140,10 @@ class BikePedModel(mesa.Model):
         Commuter.STRESS_EWMA_ALPHA = commuter_stress_ewma_alpha
         Commuter.BIKE_SWEET_SPOT = int(bike_sweet_spot)
         Commuter.OVERCROWDING_WEIGHT = float(overcrowding_weight)
+        Commuter.BIKE_CAR_TRAFFIC_WEIGHT = float(bike_car_traffic_weight)
+        Commuter.BIKEABILITY_FROM_BIKES_WEIGHT = float(
+            bikeability_from_bikes_weight
+        )
         Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT = float(bike_social_benefit_weight)
         Commuter.BIKE_OVERCROWDING_EXPONENT = float(bike_overcrowding_exponent)
         threshold = int(car_congestion_threshold)
@@ -174,11 +180,13 @@ class BikePedModel(mesa.Model):
         )
 
         logger.info(
-            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | bike_social_benefit_weight=%.2f | overcrowding_weight=%.2f | bike_overcrowding_exponent=%.2f | car_congestion_threshold=%d | car_overcrowding_weight=%.2f | car_bike_traffic_weight=%.2f | car_bike_crowding_threshold=%d",
+            "Stress bin size=%.2fm | initial_car_share=%.2f | bike_sweet_spot=%d | bike_social_benefit_weight=%.2f | bike_car_traffic_weight=%.2f | bikeability_from_bikes_weight=%.2f | overcrowding_weight=%.2f | bike_overcrowding_exponent=%.2f | car_congestion_threshold=%d | car_overcrowding_weight=%.2f | car_bike_traffic_weight=%.2f | car_bike_crowding_threshold=%d",
             getattr(self.space, "stress_bin_size_m", float("nan")),
             self.initial_car_share,
             Commuter.BIKE_SWEET_SPOT,
             Commuter.BIKE_SOCIAL_BENEFIT_WEIGHT,
+            Commuter.BIKE_CAR_TRAFFIC_WEIGHT,
+            Commuter.BIKEABILITY_FROM_BIKES_WEIGHT,
             Commuter.OVERCROWDING_WEIGHT,
             Commuter.BIKE_OVERCROWDING_EXPONENT,
             Commuter.CAR_CONGESTION_THRESHOLD,

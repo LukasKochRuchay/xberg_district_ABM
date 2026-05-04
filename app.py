@@ -133,6 +133,18 @@ def build_parser():
     help="Number of nearby cyclists that lowers bike stress before overcrowding begins.",
   )
   parser.add_argument(
+    "--bike-car-traffic-weight",
+    type=float,
+    default=2.0,
+    help="Stress contribution from nearby cars to bike users.",
+  )
+  parser.add_argument(
+    "--bikeability-from-bikes-weight",
+    type=float,
+    default=0.3,
+    help="How strongly bike co-presence increases learned bikeability in mode choice.",
+  )
+  parser.add_argument(
     "--overcrowding-weight",
     type=float,
     default=0.5,
@@ -260,6 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     commuter_mode_choice_epsilon=args.epsilon,
     commuter_stress_ewma_alpha=args.alpha,
     bike_sweet_spot=args.bike_sweet_spot,
+    bike_car_traffic_weight=args.bike_car_traffic_weight,
+    bikeability_from_bikes_weight=args.bikeability_from_bikes_weight,
     overcrowding_weight=args.overcrowding_weight,
     bike_social_benefit_weight=args.bike_social_benefit_weight,
     bike_overcrowding_exponent=args.bike_overcrowding_exponent,

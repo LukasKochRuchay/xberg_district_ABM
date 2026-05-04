@@ -52,6 +52,7 @@ class Commuter(mg.GeoAgent):
 
     # When biking, car co-presence contributes to perceived stress.
     BIKE_CAR_TRAFFIC_WEIGHT: float
+    BIKEABILITY_FROM_BIKES_WEIGHT: float
     BIKE_SOCIAL_BENEFIT_WEIGHT: float
     BIKE_SWEET_SPOT: int
     OVERCROWDING_WEIGHT: float
@@ -99,6 +100,7 @@ class Commuter(mg.GeoAgent):
         self.CAR_PROB_RAMP_M = 5000.0  # from 5km to 10km reaches max
 
         self.BIKE_CAR_TRAFFIC_WEIGHT = 2.0
+        self.BIKEABILITY_FROM_BIKES_WEIGHT = 0.3
         self.BIKE_SOCIAL_BENEFIT_WEIGHT = 2.0
         self.BIKE_SWEET_SPOT = 5
         self.OVERCROWDING_WEIGHT = 0.5
@@ -112,7 +114,10 @@ class Commuter(mg.GeoAgent):
 
         # Learned expectations: lower is better.
         self._expected_stress: dict[str, float] = {"bike": 0.0, "car": 0.0}
-        self._trip_stress_samples: list[int] = []
+        # Learned local bike co-presence signal. Higher means more bikeable context.
+        self._expected_bikeability: float = 0.0
+        self._trip_stress_samples: list[float] = []
+        self._trip_bikeability_samples: list[float] = []
 
     def __repr__(self) -> str:
         return (
@@ -221,7 +226,12 @@ class Commuter(mg.GeoAgent):
             return
 
         # Prefer the mode with lower expected stress.
-        bike_c = self._expected_stress["bike"]
+        # Bike co-presence raises an agent's learned bikeability and shifts choices
+        # toward biking for both current bike and car users.
+        bikeability_bonus = (
+            self.BIKEABILITY_FROM_BIKES_WEIGHT * self._expected_bikeability
+        )
+        bike_c = self._expected_stress["bike"] - bikeability_bonus
         car_c = self._expected_stress["car"]
         if bike_c == car_c:
             # Avoid a systematic bias.
@@ -236,6 +246,7 @@ class Commuter(mg.GeoAgent):
     def _path_select(self) -> None:
         self.step_in_path = 0
         self._trip_stress_samples = []
+        self._trip_bikeability_samples = []
 
         if self.origin is None or self.destination is None:
             self.my_path = []
@@ -329,7 +340,9 @@ class Commuter(mg.GeoAgent):
                 + bike_excess * self.CAR_BIKE_TRAFFIC_WEIGHT
             )
 
-        self._trip_stress_samples.append(int(stress))
+        self._trip_stress_samples.append(float(stress))
+        # Co-presence of bike riders always contributes positively to bikeability.
+        self._trip_bikeability_samples.append(float(len(bikes)))
 
     def _update_expected_stress_from_trip(self) -> None:
         if not self._trip_stress_samples:
@@ -341,5 +354,12 @@ class Commuter(mg.GeoAgent):
         self._expected_stress[self.current_mode] = (
             (1 - alpha) * prev + alpha * trip_mean
         )
+
+        if self._trip_bikeability_samples:
+            bikeability_trip_mean = float(np.mean(self._trip_bikeability_samples))
+            self._expected_bikeability = (
+                (1 - alpha) * self._expected_bikeability
+                + alpha * bikeability_trip_mean
+            )
     
     
