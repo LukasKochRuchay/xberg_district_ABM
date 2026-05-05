@@ -199,9 +199,11 @@ def build_parser():
     help="Path to buildings dataset.",
   )
   data.add_argument(
+    "--carways-file",
     "--walkways-file",
-    default="data/district_walkway_line.zip",
-    help="Path to walking network lines.",
+    dest="carways_file",
+    default="data/district_carway_line.zip",
+    help="Path to car network lines.",
   )
   data.add_argument(
     "--bikeways-file",
@@ -255,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
   base_dir = Path.cwd()
 
   buildings_file = base_dir / args.buildings_file
-  walkways_file = base_dir / args.walkways_file
+  carways_file = base_dir / args.carways_file
   bikeways_file = base_dir / args.bikeways_file
   output_dir = base_dir / args.output_dir
 
@@ -263,7 +265,7 @@ def main(argv: list[str] | None = None) -> int:
     district="district",
     data_crs=args.data_crs,
     buildings_file=buildings_file,
-    walkways_file=walkways_file,
+    carways_file=carways_file,
     bikeways_file=bikeways_file,
     output_dir=output_dir,
     output_name=args.output_name,

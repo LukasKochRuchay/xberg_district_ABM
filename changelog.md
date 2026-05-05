@@ -1,0 +1,7 @@
+- make epsilon optional arg parse parameter, set dafeault to --epsilon 0.01
+- take out car-base-stress
+- integrate proper bikebality impact
+- Network and crowding simplifications: bin-based co-location is a coarse proxy for true exposure.
+- implement realistic congestion behaviour
+- normalize steering paramaters
+- add bikeability and stress as penality for shortest path

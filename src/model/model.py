@@ -43,7 +43,7 @@ class BikePedModel(mesa.Model):
 
     running: bool
     space: District
-    walk_network: DistrictWalkway
+    car_network: DistrictWalkway
     bike_network: DistrictWalkway
     num_commuters: int
     day: int
@@ -56,8 +56,8 @@ class BikePedModel(mesa.Model):
         district: str = "district",
         data_crs: str = "epsg:4326",
         buildings_file: str | Path = repo_root / "data/bld.zip",
-        walkways_file: str | Path = repo_root / "data/walkway_line.zip",
-        bikeways_file: str | Path = repo_root / "data/bikeway_line.zip",
+        carways_file: str | Path = repo_root / "data/district_carway_line.zip",
+        bikeways_file: str | Path = repo_root / "data/district_bikeway_line.zip",
         output_dir: str | Path = repo_root / "data/outputs",
         output_name: str = "agent_history",
         num_commuters: int = 50,
@@ -200,9 +200,9 @@ class BikePedModel(mesa.Model):
 
         # Load data and initialize model state
         logger.info(
-            "Loading buildings=%s walkways=%s bikeways=%s",
+            "Loading buildings=%s carways=%s bikeways=%s",
             buildings_file,
-            walkways_file,
+            carways_file,
             bikeways_file,
         )
         self._load_buildings_from_file(buildings_file, crs=model_crs)
@@ -213,15 +213,15 @@ class BikePedModel(mesa.Model):
             len(self.space.workplaces),
         )
         self._load_networks_from_files(
-            walkways_file=walkways_file,
+            carways_file=carways_file,
             bikeways_file=bikeways_file,
             crs=model_crs,
         )
 
         logger.info(
-            "Walk network: nodes=%d edges=%d",
-            self.walk_network.nx_graph.number_of_nodes(),
-            self.walk_network.nx_graph.number_of_edges(),
+            "Car network: nodes=%d edges=%d",
+            self.car_network.nx_graph.number_of_nodes(),
+            self.car_network.nx_graph.number_of_edges(),
         )
         logger.info(
             "Bike network: nodes=%d edges=%d",
@@ -285,12 +285,8 @@ class BikePedModel(mesa.Model):
             # Seed initial mode mix.
             if random.random() < self.initial_car_share:
                 commuter.current_mode = "car"
-                commuter._expected_stress["car"] = 0.0
-                commuter._expected_stress["bike"] = 1.0
             else:
                 commuter.current_mode = "bike"
-                commuter._expected_stress["bike"] = 0.0
-                commuter._expected_stress["car"] = 1.0
 
             self.space.add_commuter(commuter)
     
@@ -357,15 +353,15 @@ class BikePedModel(mesa.Model):
     def _load_networks_from_files(
         self,
         *,
-        walkways_file: str | Path,
+        carways_file: str | Path,
         bikeways_file: str | Path,
         crs: str,
     ) -> None:
-        walk_df = gpd.read_file(walkways_file)
-        if walk_df.crs is None:
-            walk_df = walk_df.set_crs(self.data_crs, allow_override=True)
-        walk_df = walk_df.to_crs(crs)
-        logger.info("Read walkways rows=%d crs=%s", len(walk_df), walk_df.crs)
+        car_df = gpd.read_file(carways_file)
+        if car_df.crs is None:
+            car_df = car_df.set_crs(self.data_crs, allow_override=True)
+        car_df = car_df.to_crs(crs)
+        logger.info("Read carways rows=%d crs=%s", len(car_df), car_df.crs)
 
         bike_df = gpd.read_file(bikeways_file)
         if bike_df.crs is None:
@@ -373,9 +369,9 @@ class BikePedModel(mesa.Model):
         bike_df = bike_df.to_crs(crs)
         logger.info("Read bikeways rows=%d crs=%s", len(bike_df), bike_df.crs)
 
-        self.walk_network = DistrictWalkway(
-            district=f"{self.district}_walk",
-            lines=walk_df["geometry"],
+        self.car_network = DistrictWalkway(
+            district=f"{self.district}_car",
+            lines=car_df["geometry"],
             output_dir=str(self.output_dir),
         )
         self.bike_network = DistrictWalkway(
@@ -383,17 +379,20 @@ class BikePedModel(mesa.Model):
             lines=bike_df["geometry"],
             output_dir=str(self.output_dir),
         )
+        # Backward-compatible alias for older call sites.
+        self.walk_network = self.car_network
         
     def _set_building_entrances(self) -> None:
         for building in (*self.space.homes, *self.space.workplaces):
-            building.walk_entrance_pos = self.walk_network.get_nearest_node(
+            building.car_entrance_pos = self.car_network.get_nearest_node(
                 building.centroid
             )
             building.bike_entrance_pos = self.bike_network.get_nearest_node(
                 building.centroid
             )
-            # Backwards-compatible default (walk)
-            building.entrance_pos = building.walk_entrance_pos
+            # Backward-compatible aliases/defaults.
+            building.walk_entrance_pos = building.car_entrance_pos
+            building.entrance_pos = building.car_entrance_pos
 
     def step(self) -> None:
         step = getattr(self, "_step", 0)

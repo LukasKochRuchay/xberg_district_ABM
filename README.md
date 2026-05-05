@@ -1,7 +1,8 @@
-CLI-first, research-oriented agent-based mobility model (ABM) built with GeoMesa.
+CLI-first, research-oriented agent-based mobility model (ABM) built with Mesa and Mesa-Geo.
 
 **What it does**
 - Loads a district building layer (homes/workplaces) and two line-network layers.
+- Uses separate car and bike networks by default (`district_carway_line.zip` and `district_bikeway_line.zip`).
 - Simulates commuters moving between home and work.
 - Logs per-agent trajectories and mode over time to `CSV` (or `GeoJSON`).
 
@@ -12,9 +13,16 @@ CLI-first, research-oriented agent-based mobility model (ABM) built with GeoMesa
 	- Example run (500 commuters, 2000 steps, WGS84 output, CSV, 50% initial car share):
 	  - `python app.py --num-commuters 500 --steps 2000 --output-crs epsg:4326 --output-format csv --initial-car-share 0.5`
 
+Data defaults used by the CLI:
+- `--buildings-file data/district_bld.zip`
+- `--carways-file data/district_carway_line.zip`
+- `--bikeways-file data/district_bikeway_line.zip`
+
+Note: `--walkways-file` is still accepted as a legacy alias of `--carways-file`.
+
 **Outputs**
-- CSV: [data/outputs/agent_history.csv](models/refactoring/data/outputs/agent_history.csv)
-- GeoJSON (optional): [data/outputs/agent_history.geojson](models/refactoring/data/outputs/agent_history.geojson)
+- CSV: [data/outputs/agent_history.csv](data/outputs/agent_history.csv)
+- GeoJSON (optional): [data/outputs/agent_history.geojson](data/outputs/agent_history.geojson)
 
 ## Parameter Cheat Sheet
 

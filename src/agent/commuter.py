@@ -44,13 +44,28 @@ class Commuter(mg.GeoAgent):
     MODE_CHOICE_EPSILON: float = 0.05
     STRESS_EWMA_ALPHA: float = 0.25
 
+    # Generic learned mode-choice features (phase 1 keeps only stress active).
+    FEATURES_BY_MODE: dict[str, tuple[str, ...]] = {
+        "bike": ("stress",),
+        "car": ("stress",),
+    }
+    # Raw feature values are combined with per-mode weights.
+    FEATURE_WEIGHTS: dict[str, dict[str, float]] = {
+        "bike": {"stress": -1.0},
+        "car": {"stress": -1.0},
+    }
+    # Feature scales for normalization before weighted aggregation.
+    FEATURE_NORMALIZATION_SCALE: dict[str, float] = {
+        "stress": 1.0,
+    }
+
     # Car choice: distance-based probability (in meters).
     CAR_DISTANCE_THRESHOLD_M: float = 5000.0
     CAR_PROB_BELOW_THRESHOLD: float = 0.1
     CAR_PROB_MAX: float = 0.9
     CAR_PROB_RAMP_M: float = 5000.0
 
-    # When biking, car co-presence contributes to perceived stress.
+    # When biking, car co-presence contributes to perceived stress. Bike co-presence is beneficial up to a point, then becomes stressful when overcrowding sets in.
     BIKE_CAR_TRAFFIC_WEIGHT: float = 2.0
     BIKE_SOCIAL_BENEFIT_WEIGHT: float = 5.0
     BIKE_SWEET_SPOT: int = 5
@@ -59,8 +74,6 @@ class Commuter(mg.GeoAgent):
     
     # When driving, stress starts only once car density exceeds this threshold.
     CAR_CONGESTION_THRESHOLD: int = 3
-    # Backward-compatible alias; kept to avoid breaking old call sites.
-    CAR_SWEET_SPOT: int = 3
     CAR_OVERCROWDING_WEIGHT: float = 0.3
     CAR_BIKE_TRAFFIC_WEIGHT: float = 0.8
     CAR_BIKE_CROWDING_THRESHOLD: int = 1
@@ -90,16 +103,16 @@ class Commuter(mg.GeoAgent):
         # Commuter behavior parameters are configured on the class by BikePedModel.
         # Keeping them off the instance avoids shadowing model-provided values.
 
-        # Learned expectations: lower is better.
-        # BUG FIX #3: Initialize bike stress slightly negative to break initial tie in favor of bike.
-        self._expected_stress: dict[str, float] = {"bike": -1.0, "car": 0.0}
-        # Learned local bike co-presence signal. Higher means more bikeable context.
-        self._expected_bikeability: float = 0.0
-        self._trip_mode_stress_samples: dict[str, list[float]] = {
-            "bike": [],
-            "car": [],
+        self._expected_features: dict[str, dict[str, float]] = {
+            mode: {feature: 0.0 for feature in self.FEATURES_BY_MODE[mode]}
+            for mode in self.FEATURES_BY_MODE
         }
-        self._trip_bikeability_samples: list[float] = []
+        self._trip_feature_samples: dict[str, dict[str, list[float]]] = {
+            mode: {feature: [] for feature in self.FEATURES_BY_MODE[mode]}
+            for mode in self.FEATURES_BY_MODE
+        }
+
+        # Phase-1 starts unbiased: all expected features initialize to zero.
 
     def __repr__(self) -> str:
         return (
@@ -167,7 +180,7 @@ class Commuter(mg.GeoAgent):
 
         if self.step_in_path < len(self.my_path):
             next_position = self.my_path[self.step_in_path]
-            # BUG FIX #6: Move stress sampling to after the agent has moved to the next position
+            # FIX #6: Move stress sampling to after the agent has moved to the next position
             self.model.space.move_commuter(self, next_position)
             self._sample_stress(next_position)
             self.step_in_path += 1
@@ -177,7 +190,7 @@ class Commuter(mg.GeoAgent):
         if self.destination is not None:
             self.model.space.move_commuter(self, self.destination.centroid)
 
-        self._update_expected_stress_from_trip()
+        self._update_expected_features_from_trip()
 
         if self.destination == self.workplace:
             self.status = "work"
@@ -208,21 +221,21 @@ class Commuter(mg.GeoAgent):
             self.current_mode = "car"
             return
 
-        # Prefer the mode with lower expected stress.
-        bike_c = self._expected_stress["bike"]
-        car_c = self._expected_stress["car"]
-        if np.isclose(bike_c, car_c):
+        # Prefer the mode with higher weighted utility from normalized features.
+        bike_u = self._mode_utility("bike")
+        car_u = self._mode_utility("car")
+        if np.isclose(bike_u, car_u):
             # Break ties without inertia so agents do not get sticky by default.
             self.current_mode = random.choice(["bike", "car"])
         else:
-            self.current_mode = "bike" if bike_c < car_c else "car"
+            self.current_mode = "bike" if bike_u > car_u else "car"
 
     # --- Path selection ---
     def _path_select(self) -> None:
         self.step_in_path = 0
-        self._trip_mode_stress_samples["bike"] = []
-        self._trip_mode_stress_samples["car"] = []
-        self._trip_bikeability_samples = []
+        for mode in self._trip_feature_samples:
+            for feature in self._trip_feature_samples[mode]:
+                self._trip_feature_samples[mode][feature].clear()
 
         if self.origin is None or self.destination is None:
             self.my_path = []
@@ -230,13 +243,12 @@ class Commuter(mg.GeoAgent):
 
         # Network selection is deferred to the model.
         # Expected attributes (to be added in your refactor model later):
-        # - model.walk_network
+        # - model.car_network
         # - model.bike_network
-        # BUG FIX #4: Correct network assignment (was swapped)
         # - bike uses model.bike_network
-        # - car uses model.walk_network (car can use pedestrian paths)
+        # - car uses model.car_network
         network = (
-            getattr(self.model, "walk_network", None)
+            getattr(self.model, "car_network", None)
             if self.current_mode == "car"
             else getattr(self.model, "bike_network", None)
         )
@@ -246,8 +258,16 @@ class Commuter(mg.GeoAgent):
             return
 
         if self.current_mode == "car":
-            source = getattr(self.origin, "walk_entrance_pos", self.origin.entrance_pos)
-            target = getattr(self.destination, "walk_entrance_pos", self.destination.entrance_pos)
+            source = getattr(
+                self.origin,
+                "car_entrance_pos",
+                self.origin.entrance_pos,
+            )
+            target = getattr(
+                self.destination,
+                "car_entrance_pos",
+                self.destination.entrance_pos,
+            )
         else:
             source = getattr(self.origin, "bike_entrance_pos", self.origin.entrance_pos)
             target = getattr(self.destination, "bike_entrance_pos", self.destination.entrance_pos)
@@ -291,7 +311,7 @@ class Commuter(mg.GeoAgent):
         (cars beyond a threshold) and from crowded bike presence.
         """
         colocated = self.model.space.get_commuters_by_pos(pos)
-        # BUG FIX #5: Exclude self from co-location count to avoid inflating social benefit
+        # BUG FIX: Exclude self from co-location count to avoid inflating social benefit
         colocated = [c for c in colocated if c != self]
         bikes = [c for c in colocated if getattr(c, "current_mode", None) == "bike"]
         cars = [c for c in colocated if getattr(c, "current_mode", None) == "car"]
@@ -314,28 +334,37 @@ class Commuter(mg.GeoAgent):
             + bike_excess * self.CAR_BIKE_TRAFFIC_WEIGHT
         )
 
-        # Learn both mode stress landscapes each trip from local context.
-        self._trip_mode_stress_samples["bike"].append(float(bike_stress))
-        self._trip_mode_stress_samples["car"].append(float(car_stress))
-        # Co-presence of bike riders always contributes positively to bikeability.
-        self._trip_bikeability_samples.append(float(len(bikes)))
+        # Learn mode-specific stress feature from local context.
+        self._trip_feature_samples["bike"]["stress"].append(float(bike_stress))
+        self._trip_feature_samples["car"]["stress"].append(float(car_stress))
 
-    def _update_expected_stress_from_trip(self) -> None:
+    def _update_expected_features_from_trip(self) -> None:
         alpha = self.STRESS_EWMA_ALPHA
 
-        for mode in ("bike", "car"):
-            samples = self._trip_mode_stress_samples[mode]
-            if not samples:
-                continue
-            trip_mean = float(np.mean(samples))
-            prev = self._expected_stress[mode]
-            self._expected_stress[mode] = (1 - alpha) * prev + alpha * trip_mean
+        for mode in self.FEATURES_BY_MODE:
+            for feature in self.FEATURES_BY_MODE[mode]:
+                samples = self._trip_feature_samples[mode][feature]
+                if not samples:
+                    continue
+                trip_mean = float(np.mean(samples))
+                prev = self._expected_features[mode][feature]
+                self._expected_features[mode][feature] = (
+                    (1 - alpha) * prev + alpha * trip_mean
+                )
 
-        if self._trip_bikeability_samples:
-            bikeability_trip_mean = float(np.mean(self._trip_bikeability_samples))
-            self._expected_bikeability = (
-                (1 - alpha) * self._expected_bikeability
-                + alpha * bikeability_trip_mean
-            )
+    def _mode_utility(self, mode: str) -> float:
+        expected = self._expected_features.get(mode, {})
+        weights = self.FEATURE_WEIGHTS.get(mode, {})
+        utility = 0.0
+        for feature in self.FEATURES_BY_MODE.get(mode, ()):
+            value = float(expected.get(feature, 0.0))
+            normalized = self._normalize_feature_value(feature, value)
+            utility += float(weights.get(feature, 0.0)) * normalized
+        return utility
+
+    def _normalize_feature_value(self, feature: str, value: float) -> float:
+        scale = float(self.FEATURE_NORMALIZATION_SCALE.get(feature, 1.0))
+        denom = max(1e-9, abs(scale))
+        return value / denom
     
     
