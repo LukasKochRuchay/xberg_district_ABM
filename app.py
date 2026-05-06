@@ -156,13 +156,13 @@ def build_parser():
     "--car-prob-below-threshold",
     type=float,
     default=0.1,
-    help="Base probability of choosing car for trips below the distance threshold.",
+    help="Base probability of choosing car for trips below the distance threshold. To fully disable distance-driven car adoption, also set --car-prob-max 0.0.",
   )
   car.add_argument(
     "--car-prob-max",
     type=float,
     default=0.9,
-    help="Maximum probability of choosing car for very long trips.",
+    help="Maximum probability of choosing car for very long trips. Set to 0.0 to fully disable distance-driven car adoption.",
   )
   car.add_argument(
     "--car-prob-ramp-m",
@@ -252,6 +252,12 @@ def main(argv: list[str] | None = None) -> int:
     level=getattr(logging, str(args.log_level).upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
   )
+
+  if args.car_prob_below_threshold == 0.0 and args.car_prob_max > 0.0:
+    logging.getLogger(__name__).warning(
+      "car-prob-below-threshold=0.0 only disables the baseline probability; distance-driven car adoption still ramps up above the threshold because car-prob-max=%.2f. Set --car-prob-max 0.0 to disable the distance rule entirely.",
+      args.car_prob_max,
+    )
 
   # Expect to run from models/refactoring so defaults like data/bld.zip work.
   base_dir = Path.cwd()

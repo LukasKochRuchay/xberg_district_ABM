@@ -421,7 +421,7 @@ class BikePedModel(mesa.Model):
             )
 
         self._update_clock()
-        self.agents.shuffle_do("step")
+        self.agents_by_type[Commuter].shuffle_do("step")
         self._write_agent_snapshot()
 
     def _update_clock(self) -> None:
